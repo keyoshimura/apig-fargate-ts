@@ -28,7 +28,7 @@ export class ApiStack extends Stack {
         { name: "Public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 27 },
         {
           name: "Private",
-          subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
           cidrMask: 27,
         },
       ],
@@ -41,7 +41,7 @@ export class ApiStack extends Stack {
 
     // Image
     const image = new ecr_assets.DockerImageAsset(this, "image", {
-      directory: path.join(__dirname, "../src/images/rm-rf-root"),
+      directory: path.join(__dirname, "../src"),
     });
 
     // Deploy Image
@@ -87,7 +87,7 @@ export class ApiStack extends Stack {
           assignPublicIp: false,
           cluster: ecsCluster,
           taskSubnets: vpc.selectSubnets({
-            subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
+            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
           }),
           memoryLimitMiB: 1024,
           cpu: 512,
