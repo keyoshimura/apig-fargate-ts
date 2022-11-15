@@ -14,12 +14,12 @@ import { Construct } from "constructs";
 import * as path from "path";
 import * as ecr_deploy from "cdk-ecr-deployment";
 
-const stage = 'dev'
-const appVersion = 'v0.0.1'
+// const stage = 'dev'
+// const appVersion = 'v0.0.1'
 const projectName = 'apig-fargate-ts';
 // TODO: CDに組み込むときはタグ戦略と併せて考えること
 // GitHubActionsでdigestを取得してそれを環境変数にSet、その値をCDKで取得、とかかな
-const dockerImageTag = `${stage}-${appVersion}`
+const dockerImageTag = 'sampleHash';
 
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -27,7 +27,9 @@ export class ApiStack extends Stack {
 
     // VPC
     const vpc = new ec2.Vpc(this, "Vpc", {
-      cidr: "10.0.0.0/24",
+      // cidr: "10.0.0.0/24",
+      vpcName: projectName,
+      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/24'),
       enableDnsHostnames: true,
       enableDnsSupport: true,
       // TODO: このNATGatewayの必要性がわからない...
@@ -41,7 +43,7 @@ export class ApiStack extends Stack {
         },
         {
           name: "Private",
-          // ORIGINALではEGRESSでのプライベートサブネットだけど、Auroraをプライベーと、FargateをPublicにするならこれでよい？
+          // ORIGINALではEGRESSでのプライベートサブネットだけど、Auroraをプライベート、FargateをPublicにするならこれでよい？
           // NATGatewayを用意するのが高くつくので、可能ならpublicSubnetでFargateを稼働させたいので
           // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
           subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
@@ -52,6 +54,7 @@ export class ApiStack extends Stack {
 
     // ECR Repository
     // TODO: イメージのライフサイクルを考えること
+    // TODO: スタック分割
     // TODO: tagに応じて直接pushできない、とか制限して単一リポジトリでいい感じに管理できるようにする
     const repository = new ecr.Repository(this, "Repository", {
       repositoryName: 'apig-fargate-ts',
@@ -89,7 +92,6 @@ export class ApiStack extends Stack {
 
     taskDefinition
       .addContainer("apigFargateTsContainer", {
-        // TODO: digest 一意に定まるものにしてimmutableにしよう
         image: ecs.ContainerImage.fromEcrRepository(repository, dockerImageTag),
         memoryLimitMiB: 256,
         logging: ecs.LogDriver.awsLogs({
@@ -109,7 +111,8 @@ export class ApiStack extends Stack {
         "LoadBalancedFargateService",
         {
           serviceName: `${projectName}-service`,
-          assignPublicIp: false,
+          // assignPublicIp: false,
+          assignPublicIp: true,
           cluster: ecsCluster,
           taskSubnets: vpc.selectSubnets({
             // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
@@ -173,5 +176,8 @@ export class ApiStack extends Stack {
     });
     api.root.addMethod("GET", getIntegration);
     api.root.addMethod("POST", postIntegration);
+    const hogeResource = api.root.addResource('hoge');
+    hogeResource.addMethod('GET', getIntegration);
+    hogeResource.addMethod('OPTIONS');
   }
 }
