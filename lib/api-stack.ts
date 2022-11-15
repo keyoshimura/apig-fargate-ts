@@ -8,10 +8,18 @@ import {
   aws_ecs as ecs,
   aws_ecs_patterns as ecs_patterns,
   aws_apigateway as apigateway,
+  RemovalPolicy,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as path from "path";
 import * as ecr_deploy from "cdk-ecr-deployment";
+
+const stage = 'dev'
+const appVersion = 'v0.0.1'
+const projectName = 'apig-fargate-ts';
+// TODO: CDに組み込むときはタグ戦略と併せて考えること
+// GitHubActionsでdigestを取得してそれを環境変数にSet、その値をCDKで取得、とかかな
+const dockerImageTag = `${stage}-${appVersion}`
 
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -22,21 +30,35 @@ export class ApiStack extends Stack {
       cidr: "10.0.0.0/24",
       enableDnsHostnames: true,
       enableDnsSupport: true,
-      natGateways: 1,
+      // TODO: このNATGatewayの必要性がわからない...
+      // natGateways: 1,
       maxAzs: 2,
       subnetConfiguration: [
-        { name: "Public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 27 },
+        { 
+          name: "Public",
+          subnetType: ec2.SubnetType.PUBLIC,
+          cidrMask: 27,
+        },
         {
           name: "Private",
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          // ORIGINALではEGRESSでのプライベートサブネットだけど、Auroraをプライベーと、FargateをPublicにするならこれでよい？
+          // NATGatewayを用意するのが高くつくので、可能ならpublicSubnetでFargateを稼働させたいので
+          // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 27,
         },
       ],
     });
 
     // ECR Repository
+    // TODO: イメージのライフサイクルを考えること
+    // TODO: tagに応じて直接pushできない、とか制限して単一リポジトリでいい感じに管理できるようにする
     const repository = new ecr.Repository(this, "Repository", {
+      repositoryName: 'apig-fargate-ts',
       imageScanOnPush: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+      // TODO: 慣れるまでコメントアウトする
+      // imageTagMutability: ecr.TagMutability.IMMUTABLE,
     });
 
     // Image
@@ -48,13 +70,14 @@ export class ApiStack extends Stack {
     new ecr_deploy.ECRDeployment(this, "DeployImage", {
       src: new ecr_deploy.DockerImageName(image.imageUri),
       dest: new ecr_deploy.DockerImageName(
-        `${Aws.ACCOUNT_ID}.dkr.ecr.${Aws.REGION}.amazonaws.com/${repository.repositoryName}`
+        `${Aws.ACCOUNT_ID}.dkr.ecr.${Aws.REGION}.amazonaws.com/${repository.repositoryName}:${dockerImageTag}`
       ),
     });
 
     // ECS Cluster
     const ecsCluster = new ecs.Cluster(this, "EcsCluster", {
-      vpc,
+      clusterName: 'apig-fargate-ts',
+      vpc: vpc,
       containerInsights: true,
     });
 
@@ -65,8 +88,9 @@ export class ApiStack extends Stack {
     );
 
     taskDefinition
-      .addContainer("rm-rf-rootContainer", {
-        image: ecs.ContainerImage.fromEcrRepository(repository, "latest"),
+      .addContainer("apigFargateTsContainer", {
+        // TODO: digest 一意に定まるものにしてimmutableにしよう
+        image: ecs.ContainerImage.fromEcrRepository(repository, dockerImageTag),
         memoryLimitMiB: 256,
         logging: ecs.LogDriver.awsLogs({
           streamPrefix: repository.repositoryName,
@@ -84,10 +108,12 @@ export class ApiStack extends Stack {
         this,
         "LoadBalancedFargateService",
         {
+          serviceName: `${projectName}-service`,
           assignPublicIp: false,
           cluster: ecsCluster,
           taskSubnets: vpc.selectSubnets({
-            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            subnetType: ec2.SubnetType.PUBLIC,
           }),
           memoryLimitMiB: 1024,
           cpu: 512,
@@ -119,9 +145,11 @@ export class ApiStack extends Stack {
 
     // VPC Link
     const link = new apigateway.VpcLink(this, "link", {
+      vpcLinkName: `${projectName}-vpc-link`,
       targets: [loadBalancedFargateService.loadBalancer],
     });
 
+    // methodごとに分割する意味ある?
     const getIntegration = new apigateway.Integration({
       type: apigateway.IntegrationType.HTTP_PROXY,
       integrationHttpMethod: "GET",
@@ -140,7 +168,9 @@ export class ApiStack extends Stack {
     });
 
     // API Gateway
-    const api = new apigateway.RestApi(this, "Api");
+    const api = new apigateway.RestApi(this, "Api", {
+      restApiName: projectName,
+    });
     api.root.addMethod("GET", getIntegration);
     api.root.addMethod("POST", postIntegration);
   }
