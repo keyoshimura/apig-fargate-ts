@@ -1,11 +1,11 @@
 {
-  "name": "api",
+  "name": "apig-fargate-ts",
   "version": "0.1.0",
   "bin": {
     "api": "bin/api.js"
   },
   "scripts": {
-    "ins": "yarn install --frozen-lockfile && cd src/images/rm-rf-root && yarn install --frozen-lockfile",
+    "ins": "yarn install --frozen-lockfile && cd src && yarn install --frozen-lockfile",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",

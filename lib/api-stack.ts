@@ -8,10 +8,18 @@ import {
   aws_ecs as ecs,
   aws_ecs_patterns as ecs_patterns,
   aws_apigateway as apigateway,
+  RemovalPolicy,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as path from "path";
 import * as ecr_deploy from "cdk-ecr-deployment";
+
+// const stage = 'dev'
+// const appVersion = 'v0.0.1'
+const projectName = 'apig-fargate-ts';
+// TODO: CDに組み込むときはタグ戦略と併せて考えること
+// GitHubActionsでdigestを取得してそれを環境変数にSet、その値をCDKで取得、とかかな
+const dockerImageTag = 'sampleHash';
 
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -19,24 +27,44 @@ export class ApiStack extends Stack {
 
     // VPC
     const vpc = new ec2.Vpc(this, "Vpc", {
-      cidr: "10.0.0.0/24",
+      // cidr: "10.0.0.0/24",
+      vpcName: projectName,
+      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/24'),
       enableDnsHostnames: true,
       enableDnsSupport: true,
+      // TODO: このNATGatewayの必要性がわからない...
+      // プライベートサブネットにFargateがあって、外に出る口がないとCDKのデプロイすら成功しない
+      // ECRへのendpointがあればOK、とはならないかな?確認したいね
       natGateways: 1,
       maxAzs: 2,
       subnetConfiguration: [
-        { name: "Public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 27 },
+        { 
+          name: "Public",
+          subnetType: ec2.SubnetType.PUBLIC,
+          cidrMask: 27,
+        },
         {
           name: "Private",
+          // ORIGINALではEGRESSでのプライベートサブネットだけど、Auroraをプライベート、FargateをPublicにするならこれでよい？
+          // NATGatewayを用意するのが高くつくので、可能ならpublicSubnetでFargateを稼働させたいので
+          // と思ったけど、セキュリティ面を考慮してNAT用意した
           subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          // subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 27,
         },
       ],
     });
 
     // ECR Repository
+    // TODO: イメージのライフサイクルを考えること
+    // TODO: スタック分割
+    // TODO: tagに応じて直接pushできない、とか制限して単一リポジトリでいい感じに管理できるようにする
     const repository = new ecr.Repository(this, "Repository", {
+      repositoryName: 'apig-fargate-ts',
       imageScanOnPush: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+      // TODO: 慣れるまでコメントアウトする
+      // imageTagMutability: ecr.TagMutability.IMMUTABLE,
     });
 
     // Image
@@ -48,13 +76,14 @@ export class ApiStack extends Stack {
     new ecr_deploy.ECRDeployment(this, "DeployImage", {
       src: new ecr_deploy.DockerImageName(image.imageUri),
       dest: new ecr_deploy.DockerImageName(
-        `${Aws.ACCOUNT_ID}.dkr.ecr.${Aws.REGION}.amazonaws.com/${repository.repositoryName}`
+        `${Aws.ACCOUNT_ID}.dkr.ecr.${Aws.REGION}.amazonaws.com/${repository.repositoryName}:${dockerImageTag}`
       ),
     });
 
     // ECS Cluster
     const ecsCluster = new ecs.Cluster(this, "EcsCluster", {
-      vpc,
+      clusterName: 'apig-fargate-ts',
+      vpc: vpc,
       containerInsights: true,
     });
 
@@ -65,8 +94,8 @@ export class ApiStack extends Stack {
     );
 
     taskDefinition
-      .addContainer("rm-rf-rootContainer", {
-        image: ecs.ContainerImage.fromEcrRepository(repository, "latest"),
+      .addContainer("apigFargateTsContainer", {
+        image: ecs.ContainerImage.fromEcrRepository(repository, dockerImageTag),
         memoryLimitMiB: 256,
         logging: ecs.LogDriver.awsLogs({
           streamPrefix: repository.repositoryName,
@@ -84,14 +113,20 @@ export class ApiStack extends Stack {
         this,
         "LoadBalancedFargateService",
         {
+          serviceName: `${projectName}-service`,
           assignPublicIp: false,
+          // assignPublicIp: true,
           cluster: ecsCluster,
           taskSubnets: vpc.selectSubnets({
+            // subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
             subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            // subnetType: ec2.SubnetType.PUBLIC,
           }),
           memoryLimitMiB: 1024,
           cpu: 512,
           desiredCount: 2,
+          // 検証時ならコストを下げたい
+          // desiredCount: 1,
           taskDefinition: taskDefinition,
           publicLoadBalancer: true,
         }
@@ -119,10 +154,12 @@ export class ApiStack extends Stack {
 
     // VPC Link
     const link = new apigateway.VpcLink(this, "link", {
+      vpcLinkName: `${projectName}-vpc-link`,
       targets: [loadBalancedFargateService.loadBalancer],
     });
 
-    const getIntegration = new apigateway.Integration({
+    // methodごとに分割する意味ある?
+    const getRootIntegration = new apigateway.Integration({
       type: apigateway.IntegrationType.HTTP_PROXY,
       integrationHttpMethod: "GET",
       options: {
@@ -130,7 +167,16 @@ export class ApiStack extends Stack {
         vpcLink: link,
       },
     });
-    const postIntegration = new apigateway.Integration({
+    const getRootHogeIntegration = new apigateway.Integration({
+      type: apigateway.IntegrationType.HTTP_PROXY,
+      integrationHttpMethod: "GET",
+      uri: `http://${loadBalancedFargateService.loadBalancer.loadBalancerDnsName}/hoge`,
+      options: {
+        connectionType: apigateway.ConnectionType.VPC_LINK,
+        vpcLink: link,
+      },
+    });
+    const postRootIntegration = new apigateway.Integration({
       type: apigateway.IntegrationType.HTTP_PROXY,
       integrationHttpMethod: "POST",
       options: {
@@ -140,8 +186,32 @@ export class ApiStack extends Stack {
     });
 
     // API Gateway
-    const api = new apigateway.RestApi(this, "Api");
-    api.root.addMethod("GET", getIntegration);
-    api.root.addMethod("POST", postIntegration);
+    const api = new apigateway.RestApi(this, "Api", {
+      restApiName: projectName,
+      deployOptions: {
+        stageName: 'prod',
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+      },
+    });
+    api.root.addMethod("GET", getRootIntegration);
+    api.root.addMethod("POST", postRootIntegration);
+    const hogeResource = api.root.addResource('hoge');
+    hogeResource.addMethod('GET', getRootHogeIntegration);
+    // ブラウザからアクセスするなら必要
+    // hogeResource.addMethod('OPTIONS');
+
+    // 以下のように、まとめて指定することもできる
+    // const proxyResource = api.root.addResource('{proxy+}');
+    // const anyIntegration = new apigateway.Integration({
+    //   type: apigateway.IntegrationType.HTTP_PROXY,
+    //   integrationHttpMethod: "ANY",
+    //   uri: `http://${loadBalancedFargateService.loadBalancer.loadBalancerDnsName}/{proxy}`,
+    //   options: {
+    //     connectionType: apigateway.ConnectionType.VPC_LINK,
+    //     vpcLink: link,
+    //   },
+    // });
+    // proxyResource.addMethod('ANY', anyIntegration);
   }
 }
