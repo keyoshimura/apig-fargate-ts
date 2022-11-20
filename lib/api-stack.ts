@@ -33,7 +33,9 @@ export class ApiStack extends Stack {
       enableDnsHostnames: true,
       enableDnsSupport: true,
       // TODO: このNATGatewayの必要性がわからない...
-      // natGateways: 1,
+      // プライベートサブネットにFargateがあって、外に出る口がないとCDKのデプロイすら成功しない
+      // ECRへのendpointがあればOK、とはならないかな?確認したいね
+      natGateways: 1,
       maxAzs: 2,
       subnetConfiguration: [
         { 
@@ -45,8 +47,9 @@ export class ApiStack extends Stack {
           name: "Private",
           // ORIGINALではEGRESSでのプライベートサブネットだけど、Auroraをプライベート、FargateをPublicにするならこれでよい？
           // NATGatewayを用意するのが高くつくので、可能ならpublicSubnetでFargateを稼働させたいので
-          // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          // と思ったけど、セキュリティ面を考慮してNAT用意した
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          // subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 27,
         },
       ],
@@ -111,16 +114,19 @@ export class ApiStack extends Stack {
         "LoadBalancedFargateService",
         {
           serviceName: `${projectName}-service`,
-          // assignPublicIp: false,
-          assignPublicIp: true,
+          assignPublicIp: false,
+          // assignPublicIp: true,
           cluster: ecsCluster,
           taskSubnets: vpc.selectSubnets({
-            // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-            subnetType: ec2.SubnetType.PUBLIC,
+            // subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            // subnetType: ec2.SubnetType.PUBLIC,
           }),
           memoryLimitMiB: 1024,
           cpu: 512,
           desiredCount: 2,
+          // 検証時ならコストを下げたい
+          // desiredCount: 1,
           taskDefinition: taskDefinition,
           publicLoadBalancer: true,
         }
@@ -153,7 +159,7 @@ export class ApiStack extends Stack {
     });
 
     // methodごとに分割する意味ある?
-    const getIntegration = new apigateway.Integration({
+    const getRootIntegration = new apigateway.Integration({
       type: apigateway.IntegrationType.HTTP_PROXY,
       integrationHttpMethod: "GET",
       options: {
@@ -161,7 +167,16 @@ export class ApiStack extends Stack {
         vpcLink: link,
       },
     });
-    const postIntegration = new apigateway.Integration({
+    const getRootHogeIntegration = new apigateway.Integration({
+      type: apigateway.IntegrationType.HTTP_PROXY,
+      integrationHttpMethod: "GET",
+      uri: `http://${loadBalancedFargateService.loadBalancer.loadBalancerDnsName}/hoge`,
+      options: {
+        connectionType: apigateway.ConnectionType.VPC_LINK,
+        vpcLink: link,
+      },
+    });
+    const postRootIntegration = new apigateway.Integration({
       type: apigateway.IntegrationType.HTTP_PROXY,
       integrationHttpMethod: "POST",
       options: {
@@ -173,11 +188,34 @@ export class ApiStack extends Stack {
     // API Gateway
     const api = new apigateway.RestApi(this, "Api", {
       restApiName: projectName,
+      deployOptions: {
+        stageName: 'prod',
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+      },
     });
-    api.root.addMethod("GET", getIntegration);
-    api.root.addMethod("POST", postIntegration);
+    api.root.addMethod("GET", getRootIntegration);
+    api.root.addMethod("POST", postRootIntegration);
     const hogeResource = api.root.addResource('hoge');
-    hogeResource.addMethod('GET', getIntegration);
-    hogeResource.addMethod('OPTIONS');
+    hogeResource.addMethod('GET', getRootHogeIntegration);
+    // const wikiResource = api.root.addResource('wiki');
+    // wikiResource.addMethod('GET', getIntegration);
+    // const wikiAboutResource = wikiResource.addResource('about');
+    // wikiAboutResource.addMethod('GET', getIntegration);
+    // ブラウザからアクセスするなら必要
+    // hogeResource.addMethod('OPTIONS');
+    // const proxyResource = api.root.addResource('{proxy+}');
+
+    // リソースやメソッドごとにURLを指定できるのなら、apigatewayで変なパスを公開しない、ということもできるのでは?
+    // const anyIntegration = new apigateway.Integration({
+    //   type: apigateway.IntegrationType.HTTP_PROXY,
+    //   integrationHttpMethod: "ANY",
+    //   uri: `http://${loadBalancedFargateService.loadBalancer.loadBalancerDnsName}/{proxy}`,
+    //   options: {
+    //     connectionType: apigateway.ConnectionType.VPC_LINK,
+    //     vpcLink: link,
+    //   },
+    // });
+    // proxyResource.addMethod('ANY', anyIntegration);
   }
 }
