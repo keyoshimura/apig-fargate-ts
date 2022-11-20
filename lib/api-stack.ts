@@ -32,10 +32,8 @@ export class ApiStack extends Stack {
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/24'),
       enableDnsHostnames: true,
       enableDnsSupport: true,
-      // TODO: このNATGatewayの必要性がわからない...
-      // プライベートサブネットにFargateがあって、外に出る口がないとCDKのデプロイすら成功しない
-      // ECRへのendpointがあればOK、とはならないかな?確認したいね
-      // natGateways: 1,
+      // 開発では1個でいいけど、本番では冗長性のために2個にすること
+      natGateways: 1,
       maxAzs: 2,
       subnetConfiguration: [
         { 
@@ -48,30 +46,32 @@ export class ApiStack extends Stack {
           // ORIGINALではEGRESSでのプライベートサブネットだけど、Auroraをプライベート、FargateをPublicにするならこれでよい？
           // NATGatewayを用意するのが高くつくので、可能ならpublicSubnetでFargateを稼働させたいので
           // と思ったけど、セキュリティ面を考慮してNAT用意した
-          // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          // subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 27,
         },
       ],
     });
 
-    vpc.addInterfaceEndpoint("ecr-endpoint", {
-      service: ec2.InterfaceVpcEndpointAwsService.ECR
-    })
-    vpc.addInterfaceEndpoint("ecr-dkr-endpoint", {
-      service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER
-    })
-    vpc.addInterfaceEndpoint("logs-endpoint", {
-      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS
-    })
-    vpc.addGatewayEndpoint("s3-endpoint", {
-      service: ec2.GatewayVpcEndpointAwsService.S3,
-      subnets: [
-        {
-          subnets: vpc.isolatedSubnets
-        }
-      ]
-    })
+    // NATGatewayよりもvpcendpointを使う方が「少しだけ」安くなる
+    // しかし、APIの中で外部にアクセスしたくなった場合にインフラ構成変更のコストが発生するのでそれならNATGatewayでもいいかな、って思いました。
+    // vpc.addInterfaceEndpoint("ecr-endpoint", {
+    //   service: ec2.InterfaceVpcEndpointAwsService.ECR
+    // })
+    // vpc.addInterfaceEndpoint("ecr-dkr-endpoint", {
+    //   service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER
+    // })
+    // vpc.addInterfaceEndpoint("logs-endpoint", {
+    //   service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS
+    // })
+    // vpc.addGatewayEndpoint("s3-endpoint", {
+    //   service: ec2.GatewayVpcEndpointAwsService.S3,
+    //   subnets: [
+    //     {
+    //       subnets: vpc.isolatedSubnets
+    //     }
+    //   ]
+    // })
 
     // ECR Repository
     // TODO: イメージのライフサイクルを考えること
@@ -136,8 +136,8 @@ export class ApiStack extends Stack {
           // assignPublicIp: true,
           cluster: ecsCluster,
           taskSubnets: vpc.selectSubnets({
-            subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-            // subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            // subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
             // subnetType: ec2.SubnetType.PUBLIC,
           }),
           memoryLimitMiB: 1024,
