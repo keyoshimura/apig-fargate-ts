@@ -198,15 +198,11 @@ export class ApiStack extends Stack {
     api.root.addMethod("POST", postRootIntegration);
     const hogeResource = api.root.addResource('hoge');
     hogeResource.addMethod('GET', getRootHogeIntegration);
-    // const wikiResource = api.root.addResource('wiki');
-    // wikiResource.addMethod('GET', getIntegration);
-    // const wikiAboutResource = wikiResource.addResource('about');
-    // wikiAboutResource.addMethod('GET', getIntegration);
     // ブラウザからアクセスするなら必要
     // hogeResource.addMethod('OPTIONS');
-    // const proxyResource = api.root.addResource('{proxy+}');
 
-    // リソースやメソッドごとにURLを指定できるのなら、apigatewayで変なパスを公開しない、ということもできるのでは?
+    // 以下のように、まとめて指定することもできる
+    // const proxyResource = api.root.addResource('{proxy+}');
     // const anyIntegration = new apigateway.Integration({
     //   type: apigateway.IntegrationType.HTTP_PROXY,
     //   integrationHttpMethod: "ANY",

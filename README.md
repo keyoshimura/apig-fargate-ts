@@ -57,13 +57,48 @@ yarn cdk deploy
 GET
 
 ```
-curl https://oqktose5q5.execute-api.ap-northeast-1.amazonaws.com/prod
+curl https://w6fv0edej8.execute-api.ap-northeast-1.amazonaws.com/prod
+curl https://w6fv0edej8.execute-api.ap-northeast-1.amazonaws.com/prod/hoge
 ```
 
 
 POST
 
 ```
-curl -H "Content-Type: application/json" -X POST https://9fvqn06oy0.execute-api.ap-northeast-1.amazonaws.com/prod/ -d '{"dir": "./Dockerfile"}'
+curl -H "Content-Type: application/json" -X POST https://w6fv0edej8.execute-api.ap-northeast-1.amazonaws.com/prod/ -d '{"dir": "./Dockerfile"}'
 ```
 
+## コードを変更して内容を試したいとき
+ローカルでイメージを作り直してECRにPushしてイメージを上書き、ECSのタスクをコンソールから手動停止しよう
+
+- 1.ローカルでイメージをビルド
+
+```
+docker image build ./src/ -t apig-fargate-ts:sampleHash
+```
+
+- 2.ECRにログイン
+
+```
+aws ecr get-login-password --region ap-northeast-1 | docker login --username AWS --password-stdin 624304563747.dkr.ecr.ap-northeast-1.amazonaws.com
+```
+
+- 3.tag付け
+
+```
+docker tag apig-fargate-ts:sampleHash 624304563747.dkr.ecr.ap-northeast-1.amazonaws.com/apig-fargate-ts:sampleHash
+```
+
+- 4.push
+
+```
+docker push 624304563747.dkr.ecr.ap-northeast-1.amazonaws.com/apig-fargate-ts:sampleHash
+```
+
+- 5.タスクの更新
+
+AWSのコンソール画面上からECSタスクを停止しよう。
+新しいイメージをPullしてくれるよ。
+
+- 参考
+  - https://docs.aws.amazon.com/ja_jp/AmazonECR/latest/userguide/docker-push-ecr-image.html
