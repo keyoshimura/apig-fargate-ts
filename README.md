@@ -57,8 +57,8 @@ yarn cdk deploy
 GET
 
 ```
-curl https://w6fv0edej8.execute-api.ap-northeast-1.amazonaws.com/prod
-curl https://w6fv0edej8.execute-api.ap-northeast-1.amazonaws.com/prod/hoge
+curl https://ejyrwo7ruf.execute-api.ap-northeast-1.amazonaws.com/prod
+curl https://ejyrwo7ruf.execute-api.ap-northeast-1.amazonaws.com/prod/hoge
 ```
 
 
