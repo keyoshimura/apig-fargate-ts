@@ -1,11 +1,13 @@
 {
   "name": "apig-fargate-ts",
   "version": "0.1.0",
+  "private": true,
   "bin": {
     "api": "bin/api.js"
   },
   "scripts": {
     "ins": "yarn install --frozen-lockfile && cd src && yarn install --frozen-lockfile",
+    "deploy-dev": "dotenv -e ./environments/env.dev -- cdk deploy ",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
@@ -15,6 +17,7 @@
     "@types/jest": "^29.2.2",
     "@types/node": "16.18.1",
     "aws-cdk": "2.50.0",
+    "dotenv-cli": "^6.0.0",
     "jest": "^29.3.1",
     "ts-jest": "^29.0.3",
     "ts-node": "^10.9.1",
@@ -25,5 +28,15 @@
     "cdk-ecr-deployment": "^2.5.6",
     "constructs": "^10.1.158",
     "source-map-support": "^0.5.21"
+  },
+  "workspaces": {
+    "packages": [
+      "src",
+      "cdk"
+    ],
+    "nohoist": [
+      "**/@aws-sdk",
+      "**/@aws-sdk/**"
+    ]
   }
 }
